@@ -15,16 +15,23 @@ from tokenizers.pre_tokenizers import Whitespace
 from pathlib import Path
 from tqdm import tqdm
 
-from components.transformer import Transformer
-from constants import Constants as const
+from pipeline.constants import Constants as const
 from pipeline.config import Config
-from pipeline.bilingual_dataset import BilingualDataset
-from translation_model import TranslationModel
+from pipeline.text_dataset import TextDataset
+from sd.paligema_processor import PaliGemmaProcessor
 
 class Trainer:
+    
+    @classmethod
+    def train_model(cls):
+        device = torch.device(const.CUDA if torch.cuda.is_available() else const.CPU)
+        print(f'Using device: {device}')
+        Path(config[const.MODEL_FOLDER]).mkdir(parents=True, exist_ok=True)
+        tokenizer = cls._get_tokenizer(config)
+        processor = PaliGemmaProcessor(tokenizer, config[const.WAVEFORM_TOKENS], config[const.WAVEFORM_SIZE])
 
     @classmethod
-    def train_model(cls, config):
+    def train_model_old(cls, config):
         device = torch.device(const.CUDA if torch.cuda.is_available() else const.CPU)
         print(f'Using device: {device}')
 
@@ -198,41 +205,40 @@ class Trainer:
         return model
 
     @classmethod
-    def _get_dataset(cls, config: dict) -> Tuple[DataLoader, DataLoader, Tokenizer, Tokenizer]:
-        raw_dataset = load_dataset(const.DATASET_NAME, 
-                                   f'{config[const.LANGUAGE_SOURCE]}-{config[const.LANGUAGE_TARGET]}',
-                                   split=const.TRAIN)
-        tokenizer_source = cls._get_or_build_tokenizer(config, 
-                                                       raw_dataset, 
-                                                       config[const.LANGUAGE_SOURCE])
-        tokenizer_target = cls._get_or_build_tokenizer(config, 
-                                                       raw_dataset,
-                                                       config[const.LANGUAGE_TARGET])
-        dataset_size = len(raw_dataset)
-        train_dataset_size = int(0.9*dataset_size)
-        val_dataset_size = dataset_size - train_dataset_size
+    def _get_tokenizer(cls, config: dict) -> Tokenizer:
+        # raw_dataset = load_dataset(const.DATA_EXPORT_PATH)
+        raw_metadata_files = load_dataset(const.METADATA_EXPORT_PATH)
+        tokenizer = cls._get_or_build_tokenizer(config, 
+                                                raw_metadata_files, 
+                                                config[const.LANGUAGE_SOURCE])
+        return tokenizer
+        # dataset_size = len(raw_metadata_files)
+        # train_dataset_size = int(0.9*dataset_size)
+        # val_dataset_size = dataset_size - train_dataset_size
 
-        train_dataset_raw, val_dataset_raw = random_split(raw_dataset,
-                                                          [train_dataset_size, val_dataset_size])
+        # generator = torch.Generator().manual_seed(42)
+        # train_dataset_raw, val_dataset_raw = random_split(raw_dataset,
+        #                                                   [train_dataset_size, val_dataset_size],
+        #                                                   generator=generator)
+        # generator = torch.Generator().manual_seed(42)
+        # train_metadata_raw, val_metadata_raw = random_split(raw_metadata_files,
+        #                                                     [train_dataset_size, val_dataset_size],
+        #                                                     generator=generator)
         
-        train_dataset = BilingualDataset(train_dataset_raw, 
-                                         tokenizer_source,
-                                         tokenizer_target,
-                                         config[const.LANGUAGE_SOURCE],
-                                         config[const.LANGUAGE_TARGET],
-                                         config[const.SEQUENCE_LENGTH])
-        validation_dataset = BilingualDataset(val_dataset_raw, 
-                                              tokenizer_source,
-                                              tokenizer_target,
-                                              config[const.LANGUAGE_SOURCE],
-                                              config[const.LANGUAGE_TARGET],
-                                              config[const.SEQUENCE_LENGTH])
-        cls._log_max_token_lengths(raw_dataset, tokenizer_source, tokenizer_target, config)
+        # train_metadata = TextDataset(train_metadata_raw, 
+        #                              tokenizer,
+        #                              config[const.LANGUAGE_SOURCE],
+        #                              config[const.SEQUENCE_LENGTH])
+        # validation_metadata = TextDataset(val_metadata_raw, 
+        #                                   tokenizer,
+        #                                   config[const.LANGUAGE_SOURCE],
+        #                                   config[const.SEQUENCE_LENGTH])
+        # cls._log_max_token_lengths(raw_metadata_files, tokenizer, config)
 
-        train_dataloader = DataLoader(train_dataset, config[const.BATCH_SIZE], shuffle=True)
-        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=True)
+        # train_metadata_loader = DataLoader(train_metadata, config[const.BATCH_SIZE], shuffle=True)
+        # validation_metadata_loader = DataLoader(validation_metadata, batch_size=1, shuffle=True)
 
-        return train_dataloader, validation_dataloader, tokenizer_source, tokenizer_target
+        # return train_metadata_loader, validation_metadata_loader, tokenizer
 
 
     @staticmethod
