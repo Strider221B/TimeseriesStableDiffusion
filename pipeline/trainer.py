@@ -18,10 +18,11 @@ from tqdm import tqdm
 from pipeline.constants import Constants as const
 from pipeline.config import Config
 from pipeline.text_dataset import TextDataset
+from pipeline.utils import Utils
 from sd.paligema_processor import PaliGemmaProcessor
 
 class Trainer:
-    
+
     @classmethod
     def train_model(cls):
         device = torch.device(const.CUDA if torch.cuda.is_available() else const.CPU)
@@ -29,6 +30,13 @@ class Trainer:
         Path(config[const.MODEL_FOLDER]).mkdir(parents=True, exist_ok=True)
         tokenizer = cls._get_tokenizer(config)
         processor = PaliGemmaProcessor(tokenizer, config[const.WAVEFORM_TOKENS], config[const.WAVEFORM_SIZE])
+        model_inputs = Utils.get_model_inputs_multiple(processor,
+                                                       config[const.DATA_EXPORT_PATH],
+                                                       config[const.METADATA_EXPORT_PATH],
+                                                       device)
+        input_ids = model_inputs["input_ids"]
+        attention_mask = model_inputs["attention_mask"]
+        pixel_values = model_inputs["pixel_values"]
 
     @classmethod
     def train_model_old(cls, config):
@@ -37,8 +45,8 @@ class Trainer:
 
         Path(config[const.MODEL_FOLDER]).mkdir(parents=True, exist_ok=True)
         train_dataloader, validation_dataloader, tokenizer_source, tokenizer_target = cls._get_dataset(config)
-        model = cls._get_model(config, 
-                               tokenizer_source.get_vocab_size(), 
+        model = cls._get_model(config,
+                               tokenizer_source.get_vocab_size(),
                                tokenizer_target.get_vocab_size()).to(device)
         writer = SummaryWriter(config[const.EXPERIMENT_NAME])
         optimizer = torch.optim.adam.Adam(model.parameters(), lr=config[const.LEARNING_RATE], eps=1e-9)
@@ -53,13 +61,13 @@ class Trainer:
             initial_epoch = state[const.EPOCH] + 1
             optimizer.load_state_dict(state[const.OPTIMIZER_STATE_DICT])
             global_step = state[const.GLOBAL_STEP]
-        
+
         # Label smoothing - we ask the model to be less confident about its prediction. Whatever is the
         # result with highest prediction, we take the fraction mentioned in the label_smoothing parameter
         # and distribute it to the other predictions.
         loss_function = nn.CrossEntropyLoss(ignore_index=tokenizer_source.token_to_id[const.TOKEN_PADDING],
                                             label_smoothing=0.1).to(device)
-        
+
         for epoch in range(initial_epoch, config[const.NO_OF_EPOCHS]):
             model.train()
             batch_iterator = tqdm(train_dataloader, desc=f'Processing epoch {epoch: 02d}')
@@ -82,7 +90,7 @@ class Trainer:
                 loss = loss_function(projection_output.view(-1, tokenizer_target.get_vocab_size()),
                                      label.view(-1))
                 batch_iterator.set_postfix(f'Loss: {loss.item(): 6.3f}')
-                
+
                 writer.add_scalar(const.TRAIN_LOSS. loss.item(), global_step)
                 writer.flush()
 
@@ -114,10 +122,10 @@ class Trainer:
 
     @classmethod
     def _run_validation(cls,
-                        model: Transformer, 
-                        validation_dataset, 
-                        tokenizer_src: Tokenizer, 
-                        tokenizer_tgt: Tokenizer, 
+                        model: Transformer,
+                        validation_dataset,
+                        tokenizer_src: Tokenizer,
+                        tokenizer_tgt: Tokenizer,
                         max_len,
                         device,
                         print_msg,
@@ -142,14 +150,14 @@ class Trainer:
 
                 assert encoder_input.size(0) == 1, 'Batch size must be one for validation.'
 
-                model_output = cls._greedy_decode(model, 
-                                                  encoder_input, 
+                model_output = cls._greedy_decode(model,
+                                                  encoder_input,
                                                   encoder_mask,
                                                   tokenizer_src,
                                                   tokenizer_tgt,
                                                   max_len,
                                                   device)
-                
+
                 source_texts.append(batch[const.TEXT_SOURCE][0])
                 expected.append(batch[const.TEXT_TARGET][0])
                 predicted.append(tokenizer_tgt.decode(model_output.detach().cpu().numpy()))
@@ -163,14 +171,14 @@ class Trainer:
                 if count == num_examples:
                     break
 
-    
+
     @classmethod
     def _greedy_decode(cls,
-                       model: Transformer, 
+                       model: Transformer,
                        source,
                        source_mask,
-                       tokenizer_src: Tokenizer, 
-                       tokenizer_tgt: Tokenizer, 
+                       tokenizer_src: Tokenizer,
+                       tokenizer_tgt: Tokenizer,
                        max_len,
                        device):
         sos_index = tokenizer_src.token_to_id([const.TOKEN_START_OF_SENTENCE])
@@ -185,9 +193,9 @@ class Trainer:
             output = model.decode(encoder_output, source_mask, decoder_input, decoder_mask)
             probability = model.project(output[:, -1]) # we need the projection of the last token
             _, next_word = torch.max(probability, dim=1) # greedy search
-            decoder_input = torch.concat([decoder_input, 
+            decoder_input = torch.concat([decoder_input,
                                           cls._get_decoder_token_for(next_word.item(), source, device)])
-        
+
         return decoder_input.squeeze(0) # removing batch dimension.
 
 
@@ -197,7 +205,7 @@ class Trainer:
 
     @staticmethod
     def _get_model(config: dict, vocab_src_len: int, vocab_trgt_len: int):
-        model = TranslationModel.build_transformer(vocab_src_len, 
+        model = TranslationModel.build_transformer(vocab_src_len,
                                                    vocab_trgt_len,
                                                    config[const.SEQUENCE_LENGTH],
                                                    config[const.SEQUENCE_LENGTH],
@@ -208,8 +216,8 @@ class Trainer:
     def _get_tokenizer(cls, config: dict) -> Tokenizer:
         # raw_dataset = load_dataset(const.DATA_EXPORT_PATH)
         raw_metadata_files = load_dataset(const.METADATA_EXPORT_PATH)
-        tokenizer = cls._get_or_build_tokenizer(config, 
-                                                raw_metadata_files, 
+        tokenizer = cls._get_or_build_tokenizer(config,
+                                                raw_metadata_files,
                                                 config[const.LANGUAGE_SOURCE])
         return tokenizer
         # dataset_size = len(raw_metadata_files)
@@ -224,12 +232,12 @@ class Trainer:
         # train_metadata_raw, val_metadata_raw = random_split(raw_metadata_files,
         #                                                     [train_dataset_size, val_dataset_size],
         #                                                     generator=generator)
-        
-        # train_metadata = TextDataset(train_metadata_raw, 
+
+        # train_metadata = TextDataset(train_metadata_raw,
         #                              tokenizer,
         #                              config[const.LANGUAGE_SOURCE],
         #                              config[const.SEQUENCE_LENGTH])
-        # validation_metadata = TextDataset(val_metadata_raw, 
+        # validation_metadata = TextDataset(val_metadata_raw,
         #                                   tokenizer,
         #                                   config[const.LANGUAGE_SOURCE],
         #                                   config[const.SEQUENCE_LENGTH])
@@ -259,18 +267,18 @@ class Trainer:
         if not Path.exists(tokenizer_path):
             tokenizer = Tokenizer(WordLevel(unk_token=const.TOKEN_UNKNOWN))
             tokenizer.pre_tokenizer = Whitespace()
-            trainer = WordLevelTrainer(special_tokens=[const.TOKEN_UNKNOWN, 
-                                                       const.TOKEN_PADDING, 
+            trainer = WordLevelTrainer(special_tokens=[const.TOKEN_UNKNOWN,
+                                                       const.TOKEN_PADDING,
                                                        const.TOKEN_START_OF_SENTENCE,
-                                                       const.TOKEN_END_OF_SENTENCE], 
+                                                       const.TOKEN_END_OF_SENTENCE],
                                        min_frequency=2)
             tokenizer.train_from_iterator(cls._get_all_sentences(dataset, language),
                                           trainer=trainer)
             tokenizer.save(str(tokenizer_path))
         else:
             tokenizer = Tokenizer.from_file(str(tokenizer_path))
-        return tokenizer        
-    
+        return tokenizer
+
     @staticmethod
     def _get_all_sentences(dataset, language):
         for item in dataset:

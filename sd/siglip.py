@@ -2,16 +2,19 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from pipeline.config import Config
+from pipeline.constants import Constants as const
+
 class SiglipTimeseriesConfig:
 
     def __init__(
         self,
+        waveform_size: int,
         hidden_size=768,
         intermediate_size=3072,
         num_hidden_layers=12,
         num_attention_heads=12,
-        num_channels=3, # SC: should be 1 for us
-        image_size=224, # SC: Waveform size
+        num_channels=1,
         patch_size=16,
         layer_norm_eps=1e-6,
         attention_dropout=0.0,
@@ -26,7 +29,7 @@ class SiglipTimeseriesConfig:
         self.num_attention_heads = num_attention_heads
         self.num_channels = num_channels
         self.patch_size = patch_size
-        self.image_size = image_size
+        self.image_size = waveform_size
         self.attention_dropout = attention_dropout
         self.layer_norm_eps = layer_norm_eps
         self.num_image_tokens = num_image_tokens
@@ -40,7 +43,7 @@ class SiglipTimeseriesEmbeddings(nn.Module):
         self.image_size = config.image_size
         self.patch_size = config.patch_size
 
-        self.patch_embedding = nn.Conv2d( # SC: should be conv 1d
+        self.patch_embedding = nn.Conv1d(
             in_channels=config.num_channels,
             out_channels=self.embed_dim,
             kernel_size=self.patch_size,
@@ -48,7 +51,7 @@ class SiglipTimeseriesEmbeddings(nn.Module):
             padding="valid", # This indicates no padding is added
         )
 
-        self.num_patches = (self.image_size // self.patch_size) ** 2 # SC: shouldn't be squared as we are dealing with 1D data
+        self.num_patches = (self.image_size // self.patch_size)
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
         self.register_buffer(
@@ -58,14 +61,14 @@ class SiglipTimeseriesEmbeddings(nn.Module):
         )
 
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
-        _, _, height, width = pixel_values.shape # [Batch_Size, Channels, Height, Width] # SC: we don't need width, ours is 1D data.
+        _, _, height = pixel_values.shape # [Batch_Size, Channels, Height]
         # Convolve the `patch_size` kernel over the image, with no overlapping patches since the stride is equal to the kernel size
         # The output of the convolution will have shape [Batch_Size, Embed_Dim, Num_Patches_H, Num_Patches_W]
         # where Num_Patches_H = height // patch_size and Num_Patches_W = width // patch_size
         patch_embeds = self.patch_embedding(pixel_values)  
         # [Batch_Size, Embed_Dim, Num_Patches_H, Num_Patches_W] -> [Batch_Size, Embed_Dim, Num_Patches]
         # where Num_Patches = Num_Patches_H * Num_Patches_W
-        embeddings = patch_embeds.flatten(2) # SC: skip, not required for waveforms
+        embeddings = patch_embeds
         # [Batch_Size, Embed_Dim, Num_Patches] -> [Batch_Size, Num_Patches, Embed_Dim]
         embeddings = embeddings.transpose(1, 2)
         # Add position embeddings to each patch. Each positional encoding is a vector of size [Embed_Dim]

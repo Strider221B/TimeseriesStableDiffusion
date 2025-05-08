@@ -8,9 +8,11 @@ from tokenizers import Tokenizer
 
 from pipeline.config import Config
 from pipeline.constants import Constants as const
+from pipeline.waveform_loader import WaveformLoader
+from sd.preprocessor import Preprocessor
 
 class Utils:
-    
+
     _DF_FILE_SUFFIX = '_df'
     _FILE_NAME_SEP = '_'
     _INDEX_ASSET = 0
@@ -24,22 +26,22 @@ class Utils:
         original_files = [f for f in os.listdir(path) if (os.path.isfile(os.path.join(path, f)) and f.endswith(const.EXTN_DATA_FILE))]
         for original_file in original_files:
             cls._extract_metadata_and_part_df(path, original_file, config)
-        
+
     @classmethod
     def _extract_metadata_and_part_df(cls, path: str, file_name: str, config: dict):
         original_df = pd.read_parquet(os.path.join(path, file_name))
         for i, col in enumerate(original_df):
             cls._export_metadata_and_col_data(original_df, col, file_name, i,config)
-    
+
     @classmethod
-    def _export_metadata_and_col_data(cls, 
-                                      data_frame: pd.DataFrame, 
+    def _export_metadata_and_col_data(cls,
+                                      data_frame: pd.DataFrame,
                                       column_name: str,
                                       original_file_name: str,
                                       column_index: int,
                                       config: dict):
         file_details = original_file_name.removesuffix(const.EXTN_DATA_FILE).removesuffix(cls._DF_FILE_SUFFIX)
-        file_details = file_details.split(cls._FILE_NAME_SEP) 
+        file_details = file_details.split(cls._FILE_NAME_SEP)
         speed_in_rpm = file_details[cls._INDEX_SPEED]
         speed_val = float(speed_in_rpm.removesuffix(cls._SPEED_UNIT))
         asset_name = file_details[cls._INDEX_ASSET]
@@ -48,12 +50,30 @@ class Utils:
                      f'{speed_in_rpm}{cls._FILE_NAME_SEP}'
                      f'{problem}{cls._FILE_NAME_SEP}'
                      f'{column_index}')
-        data_frame.loc[:, [column_name]].to_parquet(os.path.join(config[const.DATA_EXPORT_PATH], 
+        data_frame.loc[:, [column_name]].to_parquet(os.path.join(config[const.DATA_EXPORT_PATH],
                                                                  (f'{file_name}'
                                                                   f'{const.EXTN_DATA_FILE}')))
         metadata = f'Asset {asset_name} running at {speed_val} {cls._SPEED_UNIT} is having {problem} problem.\n'
         with open(os.path.join(f'{config[const.METADATA_EXPORT_PATH]}{file_name}{const.EXTN_METADATA_FILE}'), 'w') as f:
             f.write(metadata)
+
+    @classmethod
+    def get_model_inputs_single(cls, processor: Preprocessor, prompt: str, file_path: str, device: str):
+        image = WaveformLoader.load_single(file_path)
+        images = [image]
+        prompts = [prompt]
+        model_inputs = processor(text=prompts, images=images)
+        model_inputs = cls._move_inputs_to_device(model_inputs, device)
+        return model_inputs
+
+    @classmethod
+    def get_model_inputs_multiple(cls, processor: Preprocessor, folder_path: str, device: str):
+        pass
+
+    @staticmethod
+    def _move_inputs_to_device(model_inputs: dict, device: str):
+        model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
+        return model_inputs
 
 
 # def load_hf_model(model_path: str, device: str) -> Tuple[str]:
